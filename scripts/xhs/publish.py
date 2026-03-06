@@ -16,7 +16,11 @@ from .selectors import (
     CREATOR_TAB,
     DATETIME_INPUT,
     FILE_INPUT,
+    IMAGE_EDIT_CONTAINER,
+    IMAGE_EDIT_UPLOAD_INPUT,
+    IMAGE_FILE_INPUT,
     IMAGE_PREVIEW,
+    NEXT_STEP_BUTTON_TEXT,
     ORIGINAL_SWITCH,
     ORIGINAL_SWITCH_CARD,
     POPOVER,
@@ -24,9 +28,13 @@ from .selectors import (
     SCHEDULE_SWITCH,
     TAG_FIRST_ITEM,
     TAG_TOPIC_CONTAINER,
+    TEXT_TO_IMAGE_BUTTON_TEXT,
+    TEXT_TO_IMAGE_EDITOR_TEXT,
+    TEXT_TO_IMAGE_GENERATE_BUTTON_TEXT,
+    TEXT_TO_IMAGE_GENERATING_TEXT,
+    TEXT_TO_IMAGE_RESULT_TEXT,
     TITLE_INPUT,
     TITLE_MAX_SUFFIX,
-    UPLOAD_CONTENT,
     UPLOAD_INPUT,
     VISIBILITY_DROPDOWN,
     VISIBILITY_OPTIONS,
@@ -67,8 +75,8 @@ def fill_publish_form(page: Page, content: PublishImageContent) -> None:
         TitleTooLongError: 标题超长。
         ContentTooLongError: 正文超长。
     """
-    if not content.image_paths:
-        raise PublishError("图片不能为空")
+    if not content.image_paths and not content.image_prompt:
+        raise PublishError("图片或生图提示词不能为空")
 
     # 导航到发布页
     _navigate_to_publish_page(page)
@@ -77,8 +85,13 @@ def fill_publish_form(page: Page, content: PublishImageContent) -> None:
     _click_publish_tab(page, "上传图文")
     time.sleep(1)
 
+    # 站内生图
+    if content.image_prompt:
+        _generate_images_from_prompt(page, content.image_prompt)
+
     # 上传图片
-    _upload_images(page, content.image_paths)
+    if content.image_paths:
+        _upload_images(page, content.image_paths)
 
     # 标签截取
     tags = content.tags[:10] if len(content.tags) > 10 else content.tags
@@ -88,7 +101,7 @@ def fill_publish_form(page: Page, content: PublishImageContent) -> None:
     logger.info(
         "发布内容: title=%s, images=%d, tags=%d, schedule=%s, original=%s, visibility=%s",
         content.title,
-        len(content.image_paths),
+        len(content.image_paths) + int(bool(content.image_prompt)),
         len(tags),
         content.schedule_time,
         content.is_original,
@@ -242,6 +255,186 @@ def _remove_pop_cover(page: Page) -> None:
     page.mouse_click(float(x), float(y))
 
 
+def _generate_images_from_prompt(page: Page, prompt: str) -> None:
+    """使用站内文字配图生图，并进入图文编辑页。"""
+    prompt = prompt.strip()
+    if not prompt:
+        raise PublishError("生图提示词不能为空")
+
+    logger.info("开始站内生图")
+    if not _click_button_by_text(page, TEXT_TO_IMAGE_BUTTON_TEXT):
+        raise PublishError("未找到“文字配图”入口")
+
+    _wait_for_text(page, TEXT_TO_IMAGE_EDITOR_TEXT, timeout=15.0)
+    _fill_text_to_image_prompt(page, prompt)
+
+    if not _click_button_by_text(page, TEXT_TO_IMAGE_GENERATE_BUTTON_TEXT):
+        raise PublishError("未找到“生成图片”按钮")
+
+    _wait_for_generation_result(page)
+
+    if not _click_button_by_text(page, NEXT_STEP_BUTTON_TEXT):
+        raise PublishError("未找到“下一步”按钮")
+
+    _wait_for_image_edit_page(page)
+    logger.info("站内生图完成，已进入图文编辑页")
+
+
+def _fill_text_to_image_prompt(page: Page, prompt: str) -> None:
+    """填写文字配图提示词。"""
+    filled = page.evaluate(
+        f"""
+        (() => {{
+            const isVisible = (el) => {{
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0
+                    && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden';
+            }};
+
+            const candidates = Array.from(
+                document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]')
+            ).filter(isVisible);
+
+            for (const el of candidates) {{
+                if (el.tagName === 'INPUT') continue;
+
+                el.focus();
+
+                if ('value' in el) {{
+                    const proto = el.tagName === 'TEXTAREA'
+                        ? window.HTMLTextAreaElement.prototype
+                        : window.HTMLInputElement.prototype;
+                    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                    if (setter) {{
+                        setter.call(el, {json.dumps(prompt)});
+                    }} else {{
+                        el.value = {json.dumps(prompt)};
+                    }}
+                }} else {{
+                    el.textContent = {json.dumps(prompt)};
+                }}
+
+                el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                return true;
+            }}
+
+            return false;
+        }})()
+        """
+    )
+    if not filled:
+        raise PublishError("没有找到文字配图输入框")
+    time.sleep(0.5)
+
+
+def _wait_for_generation_result(page: Page, timeout: float = 180.0) -> None:
+    """等待文字配图生成完成。"""
+    deadline = time.monotonic() + timeout
+    generation_started = False
+
+    while time.monotonic() < deadline:
+        if _page_has_text(page, TEXT_TO_IMAGE_GENERATING_TEXT):
+            generation_started = True
+
+        if _page_has_text(page, TEXT_TO_IMAGE_RESULT_TEXT) and _page_has_text(
+            page, NEXT_STEP_BUTTON_TEXT
+        ):
+            logger.info("站内生图结果已就绪")
+            return
+
+        time.sleep(1)
+
+    state = "已开始" if generation_started else "未开始"
+    raise PublishError(f"文字配图超时（{state}）")
+
+
+def _wait_for_image_edit_page(page: Page, timeout: float = 30.0) -> None:
+    """等待站内生图进入图片编辑页。"""
+    page.wait_for_element(IMAGE_EDIT_CONTAINER, timeout=timeout)
+    page.wait_for_element(TITLE_INPUT, timeout=timeout)
+    page.wait_dom_stable()
+    time.sleep(1)
+
+
+def _page_has_text(page: Page, text: str) -> bool:
+    """检查页面上是否存在指定文本。"""
+    found = page.evaluate(
+        f"""
+        (() => {{
+            const target = {json.dumps(text)};
+            return Array.from(document.querySelectorAll('*')).some((el) => {{
+                if ((el.textContent || '').trim() !== target) return false;
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0
+                    && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden';
+            }});
+        }})()
+        """
+    )
+    return found is True
+
+
+def _wait_for_text(page: Page, text: str, timeout: float = 15.0) -> None:
+    """等待页面出现指定文本。"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _page_has_text(page, text):
+            return
+        time.sleep(0.5)
+    raise PublishError(f"等待页面文本超时: {text}")
+
+
+def _click_button_by_text(page: Page, text: str, timeout: float = 10.0) -> bool:
+    """点击可见的文本按钮。"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        clicked = page.evaluate(
+            f"""
+            (() => {{
+                const isVisible = (el) => {{
+                    if (!el) return false;
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return rect.width > 0
+                        && rect.height > 0
+                        && style.display !== 'none'
+                        && style.visibility !== 'hidden';
+                }};
+
+                const targetText = {json.dumps(text)};
+                const nodes = Array.from(document.querySelectorAll('*'));
+
+                for (const node of nodes) {{
+                    if ((node.textContent || '').trim() !== targetText) continue;
+                    if (!isVisible(node)) continue;
+
+                    const clickable = node.closest('button, [role="button"]') || node;
+                    if (!isVisible(clickable)) continue;
+
+                    clickable.scrollIntoView({{ block: 'center' }});
+                    clickable.click();
+                    return true;
+                }}
+
+                return false;
+            }})()
+            """
+        )
+        if clicked:
+            time.sleep(0.5)
+            return True
+        time.sleep(0.2)
+    return False
+
+
 # ========== 图片上传 ==========
 
 
@@ -253,13 +446,32 @@ def _upload_images(page: Page, image_paths: list[str]) -> None:
     if not valid_paths:
         raise PublishError("没有有效的图片文件")
 
-    for i, path in enumerate(valid_paths):
-        selector = UPLOAD_INPUT if i == 0 else FILE_INPUT
-        logger.info("上传第 %d 张图片: %s", i + 1, path)
+    existing_count = page.get_elements_count(IMAGE_PREVIEW)
+
+    for i, path in enumerate(valid_paths, start=1):
+        selector = _get_image_upload_selector(page, first_upload=existing_count == 0 and i == 1)
+        logger.info("上传第 %d 张图片: %s", existing_count + i, path)
 
         page.set_file_input(selector, [path])
-        _wait_for_upload_complete(page, i + 1)
+        _wait_for_upload_complete(page, existing_count + i)
         time.sleep(1)
+
+
+def _get_image_upload_selector(page: Page, first_upload: bool) -> str:
+    """按当前页面状态选择图片上传 input。"""
+    if page.has_element(IMAGE_EDIT_UPLOAD_INPUT):
+        return IMAGE_EDIT_UPLOAD_INPUT
+
+    if first_upload and page.has_element(UPLOAD_INPUT):
+        return UPLOAD_INPUT
+
+    if page.has_element(IMAGE_FILE_INPUT):
+        return IMAGE_FILE_INPUT
+
+    if page.has_element(FILE_INPUT):
+        return FILE_INPUT
+
+    raise PublishError("没有找到图片上传输入框")
 
 
 def _wait_for_upload_complete(page: Page, expected_count: int) -> None:

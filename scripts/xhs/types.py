@@ -418,6 +418,7 @@ class PublishImageContent:
     content: str = ""
     tags: list[str] = field(default_factory=list)
     image_paths: list[str] = field(default_factory=list)
+    image_prompt: str = ""
     schedule_time: str | None = None  # ISO8601 格式，None 表示立即发布
     is_original: bool = False
     visibility: str = ""  # 公开可见(默认)|仅自己可见|仅互关好友可见

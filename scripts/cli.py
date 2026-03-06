@@ -31,6 +31,12 @@ def _output(data: dict, exit_code: int = 0) -> None:
     sys.exit(exit_code)
 
 
+def _read_text_file(path: str) -> str:
+    """读取 UTF-8 文本文件并去除首尾空白。"""
+    with open(path, encoding="utf-8") as f:
+        return f.read().strip()
+
+
 def _connect(args: argparse.Namespace):
     """连接到 Chrome 并返回 (browser, page)。"""
     from chrome_launcher import ensure_chrome, has_display
@@ -414,16 +420,16 @@ def cmd_publish(args: argparse.Namespace) -> None:
     from xhs.publish import publish_image_content
     from xhs.types import PublishImageContent
 
-    # 读取标题和正文
-    with open(args.title_file, encoding="utf-8") as f:
-        title = f.read().strip()
-    with open(args.content_file, encoding="utf-8") as f:
-        content = f.read().strip()
+    title = _read_text_file(args.title_file)
+    content = _read_text_file(args.content_file)
+    image_prompt = _read_text_file(args.image_prompt_file) if args.image_prompt_file else ""
 
     # 处理图片
     image_paths = process_images(args.images) if args.images else []
-    if not image_paths:
+    if args.images and not image_paths:
         _output({"success": False, "error": "没有有效的图片"}, exit_code=2)
+    if not image_paths and not image_prompt:
+        _output({"success": False, "error": "图片或生图提示词至少提供一个"}, exit_code=2)
 
     browser, page = _connect(args)
     try:
@@ -442,12 +448,20 @@ def cmd_publish(args: argparse.Namespace) -> None:
                 content=content,
                 tags=args.tags or [],
                 image_paths=image_paths,
+                image_prompt=image_prompt,
                 schedule_time=args.schedule_at,
                 is_original=args.original,
                 visibility=args.visibility or "",
             ),
         )
-        _output({"success": True, "title": title, "images": len(image_paths), "status": "发布完成"})
+        _output(
+            {
+                "success": True,
+                "title": title,
+                "images": len(image_paths) + int(bool(image_prompt)),
+                "status": "发布完成",
+            }
+        )
     finally:
         browser.close_page(page)
         browser.close()
@@ -459,14 +473,15 @@ def cmd_fill_publish(args: argparse.Namespace) -> None:
     from xhs.publish import fill_publish_form
     from xhs.types import PublishImageContent
 
-    with open(args.title_file, encoding="utf-8") as f:
-        title = f.read().strip()
-    with open(args.content_file, encoding="utf-8") as f:
-        content = f.read().strip()
+    title = _read_text_file(args.title_file)
+    content = _read_text_file(args.content_file)
+    image_prompt = _read_text_file(args.image_prompt_file) if args.image_prompt_file else ""
 
     image_paths = process_images(args.images) if args.images else []
-    if not image_paths:
+    if args.images and not image_paths:
         _output({"success": False, "error": "没有有效的图片"}, exit_code=2)
+    if not image_paths and not image_prompt:
+        _output({"success": False, "error": "图片或生图提示词至少提供一个"}, exit_code=2)
 
     browser, page = _connect(args)
     try:
@@ -477,6 +492,7 @@ def cmd_fill_publish(args: argparse.Namespace) -> None:
                 content=content,
                 tags=args.tags or [],
                 image_paths=image_paths,
+                image_prompt=image_prompt,
                 schedule_time=args.schedule_at,
                 is_original=args.original,
                 visibility=args.visibility or "",
@@ -486,7 +502,7 @@ def cmd_fill_publish(args: argparse.Namespace) -> None:
             {
                 "success": True,
                 "title": title,
-                "images": len(image_paths),
+                "images": len(image_paths) + int(bool(image_prompt)),
                 "status": "表单已填写，等待确认发布",
             }
         )
@@ -769,7 +785,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = subparsers.add_parser("publish", help="发布图文")
     sub.add_argument("--title-file", required=True, help="标题文件路径")
     sub.add_argument("--content-file", required=True, help="正文文件路径")
-    sub.add_argument("--images", nargs="+", required=True, help="图片路径/URL")
+    sub.add_argument("--images", nargs="*", help="图片路径/URL")
+    sub.add_argument("--image-prompt-file", help="站内生图提示词文件路径")
     sub.add_argument("--tags", nargs="*", help="标签")
     sub.add_argument("--schedule-at", help="定时发布 (ISO8601)")
     sub.add_argument("--original", action="store_true", help="声明原创")
@@ -792,7 +809,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = subparsers.add_parser("fill-publish", help="填写图文表单（不发布）")
     sub.add_argument("--title-file", required=True, help="标题文件路径")
     sub.add_argument("--content-file", required=True, help="正文文件路径")
-    sub.add_argument("--images", nargs="+", required=True, help="图片路径/URL")
+    sub.add_argument("--images", nargs="*", help="图片路径/URL")
+    sub.add_argument("--image-prompt-file", help="站内生图提示词文件路径")
     sub.add_argument("--tags", nargs="*", help="标签")
     sub.add_argument("--schedule-at", help="定时发布 (ISO8601)")
     sub.add_argument("--original", action="store_true", help="声明原创")

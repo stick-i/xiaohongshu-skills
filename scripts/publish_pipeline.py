@@ -21,6 +21,7 @@ def run_publish_pipeline(
     title: str,
     content: str,
     images: list[str] | None = None,
+    image_prompt: str = "",
     video: str | None = None,
     tags: list[str] | None = None,
     schedule_time: str | None = None,
@@ -49,6 +50,8 @@ def run_publish_pipeline(
         local_images = process_images(images)
         if not local_images:
             return {"success": False, "error": "没有有效的图片"}
+    if not video and not local_images and not image_prompt:
+        return {"success": False, "error": "图片或生图提示词至少提供一个"}
 
     # 连接浏览器
     browser = Browser(host=host, port=port)
@@ -103,6 +106,7 @@ def run_publish_pipeline(
                         content=content,
                         tags=tags or [],
                         image_paths=local_images,
+                        image_prompt=image_prompt,
                         schedule_time=schedule_time,
                         is_original=is_original,
                         visibility=visibility,
@@ -113,7 +117,7 @@ def run_publish_pipeline(
                 "success": True,
                 "title": title,
                 "content_length": len(content),
-                "images": len(local_images),
+                "images": len(local_images) + int(bool(image_prompt)),
                 "video": video or "",
                 "status": "发布完成",
             }
@@ -132,6 +136,7 @@ def main() -> None:
     parser.add_argument("--title-file", required=True, help="标题文件路径")
     parser.add_argument("--content-file", required=True, help="正文文件路径")
     parser.add_argument("--images", nargs="*", help="图片路径或 URL 列表")
+    parser.add_argument("--image-prompt-file", help="站内生图提示词文件路径")
     parser.add_argument("--video", help="视频文件路径")
     parser.add_argument("--tags", nargs="*", help="标签列表")
     parser.add_argument("--schedule-at", help="定时发布时间 (ISO8601)")
@@ -148,11 +153,16 @@ def main() -> None:
         title = f.read().strip()
     with open(args.content_file, encoding="utf-8") as f:
         content = f.read().strip()
+    image_prompt = ""
+    if args.image_prompt_file:
+        with open(args.image_prompt_file, encoding="utf-8") as f:
+            image_prompt = f.read().strip()
 
     result = run_publish_pipeline(
         title=title,
         content=content,
         images=args.images,
+        image_prompt=image_prompt,
         video=args.video,
         tags=args.tags,
         schedule_time=args.schedule_at,

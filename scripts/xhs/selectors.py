@@ -46,9 +46,12 @@ UPLOAD_CONTENT = "div.upload-content"
 CREATOR_TAB = "div.creator-tab"
 UPLOAD_INPUT = ".upload-input"
 FILE_INPUT = 'input[type="file"]'
+IMAGE_FILE_INPUT = 'input[type="file"][accept*=".jpg"][accept*=".png"][accept*=".webp"]'
+IMAGE_EDIT_UPLOAD_INPUT = '.img-list input[type="file"][multiple][accept*=".jpg"]'
 TITLE_INPUT = "div.d-input input"
 CONTENT_EDITOR = "div.ql-editor"
 IMAGE_PREVIEW = ".img-preview-area .pr"
+IMAGE_EDIT_CONTAINER = ".img-upload-area"
 PUBLISH_BUTTON = ".publish-page-publish-btn button.bg-red"
 
 # 标题/正文长度校验
@@ -70,6 +73,13 @@ ORIGINAL_SWITCH = "div.d-switch"
 # 标签联想
 TAG_TOPIC_CONTAINER = "#creator-editor-topic-container"
 TAG_FIRST_ITEM = ".item"
+
+# 文字配图
+TEXT_TO_IMAGE_BUTTON_TEXT = "文字配图"
+TEXT_TO_IMAGE_EDITOR_TEXT = "写文字"
+TEXT_TO_IMAGE_GENERATE_BUTTON_TEXT = "生成图片"
+TEXT_TO_IMAGE_GENERATING_TEXT = "图片生成中"
+TEXT_TO_IMAGE_RESULT_TEXT = "选择一个喜欢的卡片"
 
 # 弹窗
 POPOVER = "div.d-popover"
