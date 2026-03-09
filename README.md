@@ -59,7 +59,7 @@ uv sync
 cd <your-agent-project>/skills/
 
 # 克隆项目
-git clone https://github.com/anthropics/xiaohongshu-skills.git
+git clone https://github.com/autoclaw-cc/xiaohongshu-skills.git
 cd xiaohongshu-skills
 
 # 安装依赖
@@ -282,3 +282,9 @@ uv run pytest              # 运行测试
 ## License
 
 MIT
+
+## Trend
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/image?repos=autoclaw-cc/xiaohongshu-skills&type=date&legend=top-left)](https://www.star-history.com/?repos=autoclaw-cc%2Fxiaohongshu-skills&type=date&legend=top-left)

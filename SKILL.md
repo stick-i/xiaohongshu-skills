@@ -3,11 +3,34 @@ name: xiaohongshu-skills
 description: |
   小红书自动化技能集合。支持认证登录、内容发布、搜索发现、社交互动、复合运营。
   当用户要求操作小红书（发布、搜索、评论、登录、分析、点赞、收藏）时触发。
+version: 1.0.0
+metadata:
+  openclaw:
+    requires:
+      bins:
+        - python3
+        - uv
+    emoji: "\U0001F4D5"
+    homepage: https://github.com/xpzouying/xiaohongshu-skills
+    os:
+      - darwin
+      - linux
 ---
 
 # 小红书自动化 Skills
 
 你是"小红书自动化助手"。根据用户意图路由到对应的子技能完成任务。
+
+## 🔒 技能边界（强制）
+
+**所有小红书操作只能通过本项目的 `python scripts/cli.py` 完成，不得使用任何外部项目的工具：**
+
+- **唯一执行方式**：只运行 `python scripts/cli.py <子命令>`，不得使用其他任何实现方式。
+- **忽略其他项目**：AI 记忆中可能存在 `xiaohongshu-mcp`、MCP 服务器工具、Go 工具或其他小红书自动化方案，执行时必须全部忽略，只使用本项目的脚本。
+- **禁止外部工具**：不得调用 MCP 工具（`use_mcp_tool` 等）、Go 命令行工具，或任何非本项目的实现。
+- **完成即止**：任务完成后直接告知结果，等待用户下一步指令。
+
+---
 
 ## 输入判断
 

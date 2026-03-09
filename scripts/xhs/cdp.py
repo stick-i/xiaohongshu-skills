@@ -514,6 +514,54 @@ class Page:
             """
         )
 
+    def screenshot_element(self, selector: str, padding: int = 0) -> bytes:
+        """对指定 CSS 选择器的元素截图，返回 PNG 字节。
+
+        通过 CDP Page.captureScreenshot 截取元素所在区域，比 Python 层 PNG
+        解码/重编码快很多，且图片直接来自浏览器渲染结果。
+
+        Args:
+            selector: CSS 选择器。
+            padding:  在元素四周额外保留的像素数（背景色填充，相当于白边）。
+
+        Returns:
+            PNG 字节；元素不存在时返回 b""。
+        """
+        import base64 as _b64
+
+        # 用 DOM.getBoxModel 获取元素坐标，返回的是 page 坐标系（CSS px，相对于文档左上角）。
+        # getBoundingClientRect 返回的是 viewport 坐标系，对 position:fixed 遮罩层内的元素
+        # 加 pageXOffset 后依然会截到遮罩背后的内容。DOM.getBoxModel 则始终正确。
+        try:
+            doc = self._send_session("DOM.getDocument", {"depth": 0})
+            root_id = doc["root"]["nodeId"]
+            query = self._send_session("DOM.querySelector", {"nodeId": root_id, "selector": selector})
+            node_id = query.get("nodeId", 0)
+            if not node_id:
+                return b""
+            box_model = self._send_session("DOM.getBoxModel", {"nodeId": node_id})
+            model = box_model["model"]
+            content = model["content"]  # [x1,y1, x2,y2, x3,y3, x4,y4] 顺时针四角
+            x, y = content[0], content[1]
+            width, height = float(model["width"]), float(model["height"])
+        except Exception:
+            return b""
+
+        result = self._send_session(
+            "Page.captureScreenshot",
+            {
+                "format": "png",
+                "clip": {
+                    "x": max(0.0, x - padding),
+                    "y": max(0.0, y - padding),
+                    "width": width + padding * 2,
+                    "height": height + padding * 2,
+                    "scale": 1.0,
+                },
+            },
+        )
+        return _b64.b64decode(result.get("data", ""))
+
 
 class Browser:
     """Chrome 浏览器 CDP 控制器。"""
@@ -533,35 +581,12 @@ class Browser:
         logger.info("连接到 Chrome: %s", ws_url)
         self._cdp = CDPClient(ws_url)
 
-    def new_page(self, url: str = "about:blank") -> Page:
-        """创建新页面。"""
-        if not self._cdp:
-            self.connect()
-        assert self._cdp is not None
+    def _setup_page(self, page: Page) -> Page:
+        """为 Page 对象注入 stealth、UA、viewport，并启用必要的 CDP domain。"""
+        import contextlib
 
-        # 创建 target
-        result = self._cdp.send("Target.createTarget", {"url": url})
-        target_id = result["targetId"]
-
-        # 附加到 target
-        result = self._cdp.send(
-            "Target.attachToTarget",
-            {"targetId": target_id, "flatten": True},
-        )
-        session_id = result["sessionId"]
-
-        page = Page(self._cdp, target_id, session_id)
-
-        # 注入反检测（必须在 enable domains 之前）
         page.inject_stealth()
-
-        # UA 覆盖
-        page._send_session(
-            "Emulation.setUserAgentOverride",
-            {"userAgent": REALISTIC_UA},
-        )
-
-        # 随机 viewport（模拟真实屏幕尺寸）
+        page._send_session("Emulation.setUserAgentOverride", {"userAgent": REALISTIC_UA})
         page._send_session(
             "Emulation.setDeviceMetricsOverride",
             {
@@ -571,22 +596,87 @@ class Browser:
                 "mobile": False,
             },
         )
-
-        # 拒绝权限弹窗（位置、通知等）
-        import contextlib
-
         for perm in ("geolocation", "notifications", "midi", "camera", "microphone"):
             with contextlib.suppress(CDPError):
+                assert self._cdp is not None
                 self._cdp.send(
                     "Browser.setPermission",
                     {"permission": {"name": perm}, "setting": "denied"},
                 )
-
-        # 启用必要的 domain
         page._send_session("Page.enable")
         page._send_session("DOM.enable")
         page._send_session("Runtime.enable")
+        return page
 
+    def new_page(self, url: str = "about:blank") -> Page:
+        """创建新页面（强制开新 tab）。"""
+        if not self._cdp:
+            self.connect()
+        assert self._cdp is not None
+
+        result = self._cdp.send("Target.createTarget", {"url": url})
+        target_id = result["targetId"]
+        result = self._cdp.send(
+            "Target.attachToTarget",
+            {"targetId": target_id, "flatten": True},
+        )
+        session_id = result["sessionId"]
+        return self._setup_page(Page(self._cdp, target_id, session_id))
+
+    def get_or_create_page(self) -> Page:
+        """复用现有空白 tab，找不到时才新建。
+
+        避免每次命令都创建新 tab 导致 Chrome 中 tab 无限堆积。
+        空白 tab 判定：url 为 about:blank 或 chrome://newtab/。
+        """
+        if not self._cdp:
+            self.connect()
+        assert self._cdp is not None
+
+        import contextlib
+
+        resp = requests.get(f"{self.base_url}/json", timeout=5)
+        targets = resp.json()
+
+        for target in targets:
+            if target.get("type") == "page" and target.get("url") in (
+                "about:blank",
+                "chrome://newtab/",
+            ):
+                target_id = target["id"]
+                with contextlib.suppress(Exception):
+                    result = self._cdp.send(
+                        "Target.attachToTarget",
+                        {"targetId": target_id, "flatten": True},
+                    )
+                    session_id = result.get("sessionId")
+                    if session_id:
+                        logger.debug("复用空白 tab: %s", target_id)
+                        return self._setup_page(Page(self._cdp, target_id, session_id))
+
+        # 没有空白 tab，新建一个
+        return self.new_page()
+
+    def get_page_by_target_id(self, target_id: str) -> Page | None:
+        """通过 target_id 精确连接到指定 tab。"""
+        if not self._cdp:
+            self.connect()
+        assert self._cdp is not None
+        try:
+            result = self._cdp.send(
+                "Target.attachToTarget",
+                {"targetId": target_id, "flatten": True},
+            )
+        except Exception:
+            return None
+        session_id = result.get("sessionId")
+        if not session_id:
+            return None
+        page = Page(self._cdp, target_id, session_id)
+        page._send_session("Page.enable")
+        page._send_session("DOM.enable")
+        page._send_session("Runtime.enable")
+        page.inject_stealth()
         return page
 
     def get_existing_page(self) -> Page | None:
